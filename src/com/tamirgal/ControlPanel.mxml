@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Canvas xmlns:mx="http://www.adobe.com/2006/mxml" xmlns:tamirgal="com.tamirgal.*" creationComplete="creationComplete()">
+    <mx:Metadata>
+        [Event(name="buttonFwdClicked", type="com.tamirgal.SlideShowEvent")]
+		[Event(name="buttonRwdClicked", type="com.tamirgal.SlideShowEvent")]
+		[Event(name="buttonPlayClicked", type="com.tamirgal.SlideShowEvent")]
+		[Event(name="buttonPauseClicked", type="com.tamirgal.SlideShowEvent")]
+		[Event(name="onImageTimout", type="com.tamirgal.SlideShowEvent")]
+    </mx:Metadata>
+    
+<mx:Script>
+<![CDATA[
+
+/*
+
+ControlPanel.mxml
+
+Copyright (c) 2009 Tamir Gal, http://www.tamirgal.com, All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+    1. Redistributions of source code must retain the above copyright notice,
+        this list of conditions and the following disclaimer.
+
+    2. Redistributions in binary form must reproduce the above copyright 
+        notice, this list of conditions and the following disclaimer in 
+        the documentation and/or other materials provided with the distribution.
+
+    3. The names of the authors may not be used to endorse or promote products
+        derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR
+OR ANY CONTRIBUTORS TO THIS SOFTWARE BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,
+OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+	/**
+	 * ControlPanel.mxml
+	 * 
+	 * A control panel ('play', 'stop', 'next', 'prev') for the FlexiShow slidshow component
+	 */
+	 
+	import flash.utils.clearTimeout;
+	import flash.utils.setTimeout;
+	import mx.controls.Image;
+	
+    [Embed(source="../images/Knob Play.png")]
+    [Bindable]
+    public var playIconImage:Class;
+    
+    [Embed(source="../images/Knob Pause.png")]
+    [Bindable]
+    public var pauseIconImage:Class;
+    
+    [Embed(source="../images/Knob Fast Forward.png")]
+    [Bindable]
+    public var fwdIconImage:Class;
+    
+    [Embed(source="../images/Knob Fast Rewind.png")]
+    [Bindable]
+    public var rwnIconImage:Class;
+
+	[Bindable]    
+	public var unpressedButtonAlpha:Number = 0.65;
+	[Bindable]
+	public var pressedButtonAlpha:Number = 0.9;
+	[Bindable]
+	public var playerButtonSize:Number = 200;
+	[Bindable]
+	public var playInterval:Number = 3000;
+	
+	public var bCanTriggerNext:Boolean = false;
+	
+	//private var timerId:uint = 0;
+	
+	private var timer:Timer = new Timer(playInterval);
+	
+	private function creationComplete():void
+	{
+		timer.addEventListener(TimerEvent.TIMER,onTimer);
+		if ( isPlaying() )
+			startTimer();
+	}
+	
+	private function startTimer():void
+	{
+//		if ( 0 == timerId && CanTriggerNext ) {
+//			timerId = setTimeout(onTimer, playInterval);
+//			bCanTriggerNext = false;
+//		}
+		if( !timer.running && CanTriggerNext ) {
+			timer.start();
+			bCanTriggerNext = false;
+		}
+	}
+	
+	private function stopTimer():void
+	{
+//		if( 0 != timerId)
+//		{
+//			clearTimeout(timerId);
+//			timerId = 0;
+//		}
+		
+		if (timer.running ) {
+			timer.stop();
+		}
+	}
+	
+	private function onTimer(event:TimerEvent):void
+	{
+		stopTimer();
+		if( isPlaying() )
+		{
+			dispatchEvent(new SlideShowEvent(SlideShowEvent.IMAGE_TIMEOUT, null));
+			startTimer();
+		}
+	}
+	
+	public function get CanTriggerNext():Boolean
+	{
+		return bCanTriggerNext;
+	}
+	
+	public function set CanTriggerNext(val:Boolean):void
+	{
+		bCanTriggerNext = val;
+		if ( isPlaying() && bCanTriggerNext )
+			startTimer();
+	}
+	
+	private function rewindClicked():void
+	{
+		dispatchEvent(new SlideShowEvent(SlideShowEvent.BUTTON_RWD_CLICKED, null));
+	}
+	
+	private function forwardClicked():void
+	{
+		dispatchEvent(new SlideShowEvent(SlideShowEvent.BUTTON_FWD_CLICKED, null));
+	}
+	
+	private function playPauseClicked():void
+	{
+		if (playIcon.source == playIconImage)
+		{
+			playIcon.source = pauseIconImage;
+			dispatchEvent(new SlideShowEvent(SlideShowEvent.BUTTON_PLAY_CLICKED, null));
+		}
+		else
+		{
+			playIcon.source = playIconImage;
+			dispatchEvent(new SlideShowEvent(SlideShowEvent.BUTTON_PAUSE_CLICKED, null));
+		}
+		
+		if( isPlaying() )
+			startTimer();
+		else
+			stopTimer();
+	}
+	
+	public function setFwdButtonClickable(clickable:Boolean):void
+	{
+		setImageButtonClickable(fwdIcon, clickable);
+	}
+	
+	public function setRwdButtonClickable(clickable:Boolean):void
+	{
+		setImageButtonClickable(rwnIcon, clickable);
+	}
+	
+	public function setPlayPauseButtonClickable(clickable:Boolean):void
+	{
+		setImageButtonClickable(playIcon, clickable);
+	}
+	
+	private function setImageButtonClickable(button:Image, clickable:Boolean):void
+	{
+		if( clickable != button.buttonMode )
+		{
+			button.buttonMode = clickable;
+			button.alpha = unpressedButtonAlpha;
+		}
+	}
+	
+	private function imageButtonMouseEvent(event:MouseEvent):void
+	{
+		var button:Image = event.target as Image;
+		switch( event.type )
+		{
+			case MouseEvent.MOUSE_MOVE:
+				button.alpha = button.buttonMode ? pressedButtonAlpha : unpressedButtonAlpha;
+				break;
+				
+			case MouseEvent.MOUSE_OUT:
+				button.alpha = unpressedButtonAlpha
+				break;
+				
+			case MouseEvent.MOUSE_DOWN:
+				button.alpha = button.buttonMode ? unpressedButtonAlpha : button.alpha;
+				break;
+				
+			case MouseEvent.MOUSE_UP:
+				button.alpha = button.buttonMode ? pressedButtonAlpha : unpressedButtonAlpha;
+				break;
+			
+			default:
+			break;
+		}
+	}
+	
+	public function isPlaying():Boolean
+	{
+		return (playIcon.source == pauseIconImage);
+	}
+	
+	public function play():void
+	{
+		if (!isPlaying())
+			playPauseClicked();
+	}
+    
+]]>
+</mx:Script>
+
+	<mx:HBox id="controlPanel" verticalAlign="middle" horizontalAlign="center"
+		horizontalGap="2" cornerRadius="5">
+		
+	<mx:Canvas width="5"/>
+	<tamirgal:SmoothImage id="rwnIcon" toolTip="Prev" source="{rwnIconImage}" maxWidth="{playerButtonSize}" 
+		verticalAlign="middle" horizontalAlign="center" alpha="{unpressedButtonAlpha}"
+		mouseMove="imageButtonMouseEvent(event)" buttonMode="true"
+		mouseOut="imageButtonMouseEvent(event)"
+		mouseDown="imageButtonMouseEvent(event)"
+		mouseUp="imageButtonMouseEvent(event)"
+		click="rewindClicked()"/>
+	<tamirgal:SmoothImage id="playIcon" toolTip="Start/Pause" source="{playIconImage}" maxWidth="{playerButtonSize}" 
+		verticalAlign="middle" horizontalAlign="center" alpha="{unpressedButtonAlpha}"
+		mouseMove="imageButtonMouseEvent(event)" buttonMode="true"
+		mouseOut="imageButtonMouseEvent(event)"
+		mouseDown="imageButtonMouseEvent(event)"
+		mouseUp="imageButtonMouseEvent(event)"
+		click="playPauseClicked()"/>
+	<tamirgal:SmoothImage id="fwdIcon"  toolTip="Next" source="{fwdIconImage}" maxWidth="{playerButtonSize}" 
+		verticalAlign="middle" horizontalAlign="center" alpha="{unpressedButtonAlpha}"
+		mouseMove="imageButtonMouseEvent(event)" buttonMode="true"
+		mouseOut="imageButtonMouseEvent(event)"
+		mouseDown="imageButtonMouseEvent(event)"
+		mouseUp="imageButtonMouseEvent(event)"
+		click="forwardClicked()"/>				
+	<mx:Canvas width="5"/>
+	</mx:HBox>
+	
+</mx:Canvas>

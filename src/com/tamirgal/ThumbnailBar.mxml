@@ -1,0 +1,913 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:VBox xmlns:mx="http://www.adobe.com/2006/mxml" creationComplete="{creationComplete()}" >
+    <mx:Metadata>
+        [Event(name="thumbClicked", type="com.tamirgal.SlideShowEvent")]
+		[Event(name="thumbHoverIn", type="com.tamirgal.SlideShowEvent")]
+		[Event(name="thumbHoverOut", type="com.tamirgal.SlideShowEvent")]
+		[Event(name="selectedItemChanged", type="com.tamirgal.SlideShowEvent")]
+    </mx:Metadata>
+    
+<mx:Script>
+<![CDATA[
+/*
+
+ThumbnailBar.mxml
+
+Copyright (c) 2009 Tamir Gal, http://www.tamirgal.com, All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+    1. Redistributions of source code must retain the above copyright notice,
+        this list of conditions and the following disclaimer.
+
+    2. Redistributions in binary form must reproduce the above copyright 
+        notice, this list of conditions and the following disclaimer in 
+        the documentation and/or other materials provided with the distribution.
+
+    3. The names of the authors may not be used to endorse or promote products
+        derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR
+OR ANY CONTRIBUTORS TO THIS SOFTWARE BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,
+OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+
+	/**
+	 * ThumbnailBar.mxml
+	 * 
+	 * A component for showing list of thumbnail images
+	 */
+	import mx.core.Application;
+	import mx.controls.Image;
+	import mx.events.ResizeEvent;
+	import mx.events.EffectEvent;
+	import mx.effects.Move;
+	import com.joelconnett.geom.FlexMatrixTransformer;
+	import mx.core.Container;
+	import mx.core.ScrollPolicy;
+	import mx.containers.Canvas;
+	import mx.events.CollectionEvent;
+	import mx.events.FlexEvent;
+
+	import mx.collections.ArrayCollection;
+
+	[Bindable]
+	public var thumbSize:Number = 40;
+	[Bindable]
+	public var thumbContainerSize:Number = thumbSize-10;
+	[Bindable]
+	public var maxVisibleItems:uint = 10;
+	[Bindable]
+	public var previewSize:Number = 130;
+	[Bindable]
+	public var previewContainerSize:Number = previewSize-30;
+	[Bindable]
+	public var previewOffset:Number = previewContainerSize + 5;
+	[Bindable]
+	public var triangleButtonContainerWidth:Number = 20;
+	[Bindable]
+	public var triangleButtonContainerHeight:Number = thumbContainerSize;
+	[Bindable]
+	public var triangleButtonAlpha:Number = 0.65;
+	[Bindable]
+	public var horizontalGap:Number = 2;
+	[Bindable]
+	public var thumbnailMoveEffectDuration:Number = 500;
+	[Bindable]
+	public var previewContainer:Container = null;
+	
+	private var previewPopup:Canvas = null;
+	private var _dataProvider:ArrayCollection = null;
+	
+	private var _selectedIndex:Number = -1;
+	private var _leftVisibleIndex:Number = -1;
+	private var _rightVisibleIndex:Number = -1;
+	
+	//hold ImageContexts
+	private var images:ArrayCollection = new ArrayCollection();
+	private var imagesToLoad:ArrayCollection = new ArrayCollection();
+	private var imageContextMap:Dictionary = new Dictionary();
+	private var bCreatedCompleted:Boolean = false;
+	
+	private var loaderContext:LoaderContext = new LoaderContext(true);
+	
+	private function creationComplete():void 
+	{
+		leftButton.rawChildren.addChild(drawTriangledShape());
+		rightButton.rawChildren.addChild(drawTriangledShape(true));
+		
+		previewPopup = createPreviewCanvas();
+		
+		bCreatedCompleted = true;
+		updateItems();
+	}
+	
+	/**
+	 * Refreshes the thumbnail image list
+	 */ 
+	private function updateItems():void 
+	{
+		if (!bCreatedCompleted)
+			return;
+			
+		//clear old items
+		images.removeAll();
+		imageContextMap = new Dictionary();
+		imageList.removeAllChildren();
+		
+		if ( dataProvider != null )
+		{
+			for each (var data:Object in dataProvider)
+			{				
+				addImage(data);
+			}
+			
+			if ( images.length > 0 )
+			{
+				selectedIndex = 0;
+			}
+			
+			imageListContainer.width = getImageListWidth();
+			
+			if(images.length > maxVisibleItems) {
+				rightButton.buttonMode = true;
+			}
+		}
+	}
+	
+	/**
+	 * Sets the data provider of this thumbnail bar
+	 */
+    public function set dataProvider(_dataProvider:ArrayCollection):void
+    {
+      this._dataProvider = _dataProvider;
+      this._dataProvider.addEventListener(CollectionEvent.COLLECTION_CHANGE, updateItems);
+      updateItems();
+    }
+    
+	/**
+	 * Return the data provider of this thumbnail bar
+	 */
+    public function get dataProvider():ArrayCollection
+    {
+      return _dataProvider;
+    }
+    
+    public function outOfBound(index:int):Boolean
+    {
+		return ( (index < 0) || (index >= images.length) );
+    }
+    
+	/**
+	 * Return true if this image list has any items
+	 */
+	public function hasItems():Boolean
+	{
+		return images.length > 0;
+	}
+    
+	/**
+	 * Return the index of the last item
+	 */
+    public function get lastIndex():Number
+    {
+    	return images.length-1;
+    }
+
+	/**
+	 * Return the index of the first item
+	 */    
+    public function get firstIndex():Number
+    {
+    	return hasItems() ? 0 : -1;
+    }
+    
+	/**
+	 * Return the the last item
+	 */
+    public function get lastItem():ImageContext
+    {
+    	return hasItems() ? images[lastIndex] : null;
+    }
+
+	/**
+	 * Return the the first
+	 */    
+    public function get firstItem():ImageContext
+    {
+    	return hasItems() ? images[firstIndex] : null;
+    }
+	
+	/**
+	 * Base on the selected item index, return true if there is a next item
+	 */
+	public function hasNext():Boolean
+	{
+		return hasItems() && selectedIndex != lastIndex;
+	}
+
+	/**
+	 * Base on the selected item index, return true if there is a prev item
+	 */	
+	public function hasPrev():Boolean
+	{
+		return hasItems() && selectedIndex != firstIndex;
+	}
+	
+	/**
+	 * Selects the first item
+	 */
+	public function selectFirst():void
+	{
+		if( hasItems() )
+		{
+			selectedIndex = firstIndex;
+		}
+	}
+	
+	/**
+	 * Selects the last item
+	 */
+	public function selectLast():void
+	{
+		if( hasItems() )
+		{
+			selectedIndex = lastIndex;
+		}
+	}
+	
+	/**
+	 * Selects the next item. If loop=true select the first item when reaching the end of the list
+	 */
+	public function selectNext(loop:Boolean = false):void
+	{
+		if ( hasNext() )
+		{
+			selectedIndex ++;
+		}
+		else if( loop )
+		{
+			selectFirst();
+		}
+	}
+
+	/**
+	 * Selects the next item. If loop=true select the last item when reaching the begining of the list
+	 */	
+	public function selectPrev(loop:Boolean = false):void
+	{
+		if ( hasPrev() )
+		{
+			selectedIndex --;
+		}
+		else if( loop )
+		{
+			selectLast();
+		}
+	}
+
+	/**
+	 * Perform the index selection change
+	 */
+    public function set selectedIndex(index:Number):void
+    {
+    	if ( index<0 || index>= images.length )
+    	{
+    		trace("Error: index is out of bounds");
+    		return;
+    	}
+    	if ( index == selectedIndex )
+    		return; //do nothing
+    		
+    	var prev:ImageContext = selectedItem;
+    	var curr:ImageContext = images.getItemAt(index) as ImageContext;
+    	
+    	//prev may still not be initialized (probably first time selection)
+    	if(prev) {
+    		if ( prev.thumb )
+    			prev.thumb.buttonMode = true;
+    	}
+    	if(curr.thumb) 
+    		curr.thumb.buttonMode = false;
+    	
+    	//always hide the current popup preview
+    	previewPopup.visible = false;
+    	
+    	_selectedIndex = index;
+    	
+    	//dispatch the selected item changed event
+    	var event:SlideShowEvent = new SlideShowEvent(SlideShowEvent.THUMB_SELECTED_CHANGED, curr);
+    	event.otherImageCtx = prev;
+		dispatchEvent(event);
+    }
+    
+	/**
+	 * Return the selected index
+	 */
+    public function get selectedIndex():Number
+    {
+    	return _selectedIndex;
+    }
+
+	/**
+	 * Return the selected item
+	 */    
+    public function get selectedItem():ImageContext
+    {
+    	if ( selectedIndex < 0 || selectedIndex >= images.length )
+    	{
+    		return null;
+    	}
+    	return images[selectedIndex] as ImageContext;
+    }
+    
+	/**
+	 * Sets the selected item. Item must be a member of this collection
+	 */
+    public function set selectedItem(item:ImageContext):void
+    {
+    	var index:Number = images.getItemIndex(item);
+    	if ( -1 == index )
+    	{
+    		trace("Given item is not part of this collection");
+    		return;
+    	}
+    	this.selectedIndex = index;
+    }
+    
+	/**
+	 * Get the index of the next item
+	 */
+	public function getNextIndex():int
+	{
+		if ( hasNext() )
+		{
+			return selectedIndex + 1;
+		}
+		else
+		{
+			return firstIndex;
+		}
+	}
+
+	/**
+	 * Get the index of the next item
+	 */
+	public function getPrevIndex():int
+	{
+		if ( hasPrev() )
+		{
+			return selectedIndex - 1;
+		}
+		else
+		{
+			return lastIndex;
+		}
+	}
+	
+	public function getItemAt(index:int):ImageContext
+	{
+		if ( outOfBound(index) ) {
+    		trace("Error: index is out of bounds");
+    		return null;
+		}
+		return images.getItemAt(index) as ImageContext;
+	}
+	
+	/**
+	 * Return a mapped ImageContext for a given object
+	 */
+	private function getImageContext(key:Object):ImageContext
+	{
+		return imageContextMap[key] as ImageContext;
+	}
+	
+	/**
+	 * Add an image to this list, based on a data element (usually xml element)
+	 */
+	private function addImage(data:Object):void
+	{
+		if (StringUtil.isNullOrEmpty(data.image))
+			return;
+			
+		var image:ImageContext = new ImageContext();
+		image.loadData(data);//convert the data to an image context
+		
+		if( !hasItems() )//is this the first item?
+		{
+			image.isFirst = true;
+			image.isLast = true;
+		}
+		else //mark it as last
+		{
+			lastItem.isLast = false;	
+			image.isLast = true;
+		}
+		
+		//add it to the image context list
+		images.addItem(image);
+		
+		//if enough room in the hbox image list, add it
+		if(imageList.numChildren < maxVisibleItems)
+		{
+			addImageToList(imageList, image);
+			
+			if ( -1 == _leftVisibleIndex )
+				_leftVisibleIndex = 0;
+				
+			_rightVisibleIndex = imageList.numChildren-1;
+		}
+	}
+	
+	/**
+	 * Create a canvas control for holding a thumbnail image	
+	 */
+	private function createThumbCanvas():Canvas
+	{
+		var canv:Canvas = new Canvas();
+		canv.width = thumbContainerSize;
+		canv.height = thumbContainerSize;
+		canv.verticalScrollPolicy = ScrollPolicy.OFF;
+		canv.horizontalScrollPolicy = ScrollPolicy.OFF;
+		canv.setStyle("backgroundColor", "black");
+		canv.setStyle("borderColor", "white");
+		canv.setStyle("borderThickness", 1);
+		canv.setStyle("borderStyle", "solid");
+		return canv;
+	}
+	
+	/**
+	 * Create a new image object	
+	 */	
+	private function createThumbImage():Image
+	{
+		var img:Image = new SmoothImage();
+		//img.maxHeight = thumbSize;
+		//img.maxWidth = thumbSize;
+		img.buttonMode = true;
+		img.addEventListener(MouseEvent.CLICK, thumbnailClicked);
+		img.addEventListener(MouseEvent.MOUSE_OVER, thumbnailMouseOver);
+		img.addEventListener(MouseEvent.MOUSE_OUT, thumbnailMouseOut);
+		img.setStyle("showEffect", slowFade);
+		return img;
+	}
+	
+	/**
+	 * Create a canvas control for holding a preview (popup) image	
+	 */
+	private function createPreviewCanvas():Canvas
+	{
+		var c:Canvas = new Canvas();
+		c.visible = false;
+		c.width = previewContainerSize;
+		c.height = previewContainerSize;
+		c.verticalScrollPolicy = ScrollPolicy.OFF;
+		c.horizontalScrollPolicy = ScrollPolicy.OFF;
+		c.setStyle("backgroundColor", "black");
+		c.setStyle("borderColor", "#C0C0C0");
+		c.setStyle("borderThickness", 2);
+		c.setStyle("borderStyle", "solid");
+		c.setStyle("cornerRadius", 5);
+		c.setStyle("showEffect", fade);
+		return c;
+	}
+
+	/**
+	 * Create an image object for the preview control	
+	 */
+	private function createPreviewImage():Image
+	{
+		var img:Image = new SmoothImage();
+		//img.maxWidth = previewSize;
+		//img.maxHeight = previewSize;
+		return img;
+	}
+	
+	/**
+	 * Draw a triangle shaped button (something like "|>")
+	 */
+	private function drawTriangledShape(right:Boolean=false):Shape
+	{
+		var triangleWidth:Number = 4;
+		var triangleHeight:Number = 8;
+		var gap:Number = 3;
+		var rectWidth:Number = 3;
+		var rectHeight:Number = triangleHeight;
+	
+		var triangle:Shape = new Shape();
+		
+		//see if we draw a left button or a right one
+		if(right)
+		{
+			//if we draw the right button, lets inverst the shapes widths
+			triangleWidth = -triangleWidth;
+			rectWidth = -rectWidth;
+			gap = -gap;
+		}
+
+		//calculate the base x,y coordinates
+		var baseX:Number = triangleButtonContainerWidth/2 - (triangleWidth+gap+rectWidth)/2;
+		var baseY:Number = triangleButtonContainerHeight/2;
+		
+		//first draw a white trangle
+		triangle.graphics.beginFill(0xFFFFFF);
+		triangle.graphics.moveTo(baseX, baseY);
+		triangle.graphics.lineTo(baseX+triangleWidth, baseY+triangleHeight/2);
+		triangle.graphics.lineTo(baseX+triangleWidth, baseY-triangleHeight/2);
+		triangle.graphics.lineTo(baseX, baseY);
+
+		//now draw the gap (i.e. space) between the triangle and the vertical line
+		baseX += (triangleWidth);
+		baseY -= (triangleHeight / 2);
+		
+		//we need to draw the transparent gap so it will still be
+		//clicable space beween the triangle and the vertcal line
+		triangle.graphics.beginFill(0xFFFFFF, 0);
+		triangle.graphics.drawRect(baseX,baseY,gap,rectHeight);
+		
+		//now draw a vertical white line (a rectangle actually)
+		baseX += gap;
+		triangle.graphics.beginFill(0xFFFFFF);
+		triangle.graphics.drawRect(baseX,baseY,rectWidth,rectHeight);
+		return triangle;
+	}
+
+	/**
+	 * Copy and resizes an image	
+	 */
+	public function copyImage(orig:Image, newImg:Image, newWidth:Number = 0, newHeight:Number = 0):Image
+	{
+		if(newImg == null)
+			newImg = new SmoothImage();
+			
+		if( newWidth == 0 && newHeight == 0 )
+		{
+			newWidth = orig.contentWidth;
+			newHeight = orig.contentHeight;
+		}
+		if( newWidth == 0 || newHeight == 0 )
+		{
+			newWidth = newHeight = Math.max(newWidth, newHeight);
+		}
+		// (based on http://englishblog.flepstudio.org/tutorials/scaling-an-image-resizing-a-bitmap/ )
+		var originalBitmapData:BitmapData = Bitmap(orig.content).bitmapData;
+
+		var scaleFactor:Number = Math.max(newWidth, newHeight)/Math.max(originalBitmapData.width, originalBitmapData.height);
+		var scaledBitmapData:BitmapData=new BitmapData(newWidth,newHeight,true,0xFFFFFFFF);
+		var scaleMatrix:Matrix=new Matrix();
+		scaleMatrix.scale(scaleFactor,scaleFactor);
+		scaledBitmapData.draw(originalBitmapData,scaleMatrix);
+		var bitmap:Bitmap = new Bitmap(scaledBitmapData);
+		bitmap.smoothing = true;
+		newImg.source = bitmap;
+		return newImg;
+	}
+	
+	/**
+	 * Adds an image to the given list	
+	 */	
+	private function addImageToList(list:Container, imageCtx:ImageContext, delayLoad:Boolean=false):void
+	{
+		//if the thumbnail is not yet initialized, do it now
+		if ( imageCtx.thumb == null )
+		{
+			imageCtx.thumb = createThumbImage();
+			imageCtx.thumb.visible = true;
+			imageCtx.thumbContainer = createThumbCanvas();
+			imageCtx.thumbContainer.addChild(imageCtx.thumb);
+			imageCtx.previewImage = createPreviewImage();
+
+			//cache the image context for later use
+			imageContextMap[imageCtx.thumbUrl] = imageCtx;
+			
+			//we don't want to load a the new thumbnail while
+			//animation is on (it causes funky flickering). 
+			//check if caller wanted to delay the image loading
+			if ( delayLoad )
+			{
+				imagesToLoad.addItem( imageCtx.thumbUrl );
+			}
+			else
+			{
+				loadNewThumbnail(imageCtx.thumbUrl);
+			}
+		}
+		list.addChild(imageCtx.thumbContainer);
+	}
+	
+	/**
+	 * Thumbnail clicked event, need to select the clicked image	
+	 */
+	private function thumbnailClicked(event:MouseEvent):void 
+	{
+		//fetch the image context of the clicked image thumbnail 
+		var ctx:ImageContext = getImageContext(event.currentTarget);
+		
+		if ( ctx != null )
+		{
+			dispatchEvent(new SlideShowEvent(SlideShowEvent.THUMB_CLICKED, ctx));
+			selectedItem = ctx;
+		}
+	}
+
+	/**
+	 * Thumbnail mouse over event, need to popup the preview image	
+	 */
+	private function thumbnailMouseOver(event:MouseEvent):void 
+	{
+		//fetch the image context of the clicked image thumbnail 
+		var ctx:ImageContext = getImageContext(event.currentTarget);
+		
+		if ( ctx != null )
+		{
+			dispatchEvent(new SlideShowEvent(SlideShowEvent.THUMB_HOVER_IN, ctx));
+		}
+		
+		if ( selectedItem == ctx )
+			return; //do nothing
+		
+		if ( previewContainer )
+		{
+			if ( previewContainer != previewPopup.parent )
+				previewContainer.addChild(previewPopup);
+				
+			previewPopup.removeAllChildren();
+			var p:Point = new Point( ctx.thumb.x, ctx.thumb.y );
+			p = ctx.thumb.localToGlobal(p);
+			p = previewPopup.parent.globalToLocal(p);
+			previewPopup.x = p.x - previewPopup.width/2 + thumbContainerSize/2;
+			previewPopup.y = p.y - previewOffset;
+			previewPopup.addChild(ctx.previewImage);
+	
+			previewPopup.visible = true;
+		}
+	}
+
+	/**
+	 * Thumbnail mouse out event, need to hide the preview popup	
+	 */
+	private function thumbnailMouseOut(event:MouseEvent):void 
+	{
+		//fetch the image context of the clicked image thumbnail 
+		var ctx:ImageContext = getImageContext(event.currentTarget);
+		
+		if ( ctx != null )
+		{
+			dispatchEvent(new SlideShowEvent(SlideShowEvent.THUMB_HOVER_OUT, ctx));
+		}
+		
+		previewPopup.visible = false;
+	}
+
+	/**
+	 * Invoked when the thumbnail source image is fully loaded
+	 * This function copies the source image to a smaller thumbnailed
+	 * version of the original source to save memory. Note that the image
+	 * is actually copied twice, one for the bottom bar button and one for
+	 * the preview popup image
+	 */
+	private function imageLoaded(event:Event):void 
+	{
+		//first lets reduce the size of the original image
+		//no need leach too much memory just for small thumbnails
+		var orig:Image = event.target as Image;
+		var ctx:ImageContext = getImageContext(orig.source);
+		
+		//note ctx.thumb and ctx.previewImage has already been initialized
+				
+		if(ctx == null)
+		{
+			trace("Error: null image contex");
+			return;
+		}
+		
+		copyImage(orig, ctx.thumb, thumbSize);
+		ctx.thumb.visible = true;
+		
+		//now lets create another reduced size image for our preview popup image
+
+		copyImage(orig, ctx.previewImage, previewSize);
+		
+		//Save the image context by image so we can find it later
+		imageContextMap[ctx.thumb] = ctx;
+		imageContextMap[ctx.previewImage] = ctx;
+	}
+	
+	/**
+	 * Create the new thumbnail image and loads it from the given path
+	 */
+	private function loadNewThumbnail(path:String):void
+	{
+		var img:Image = new SmoothImage();
+		img.addEventListener(Event.COMPLETE, imageLoaded);
+		img.loaderContext = loaderContext;
+		img.load(path);
+	}
+	
+	/**
+	 * Load new thumbnails that were delayed
+	 */
+	private function loadNewThumbnails():void 
+	{
+    	for (var i:int = 0; i < imagesToLoad.length; i++)
+    	{
+    		loadNewThumbnail(imagesToLoad[i] as String);
+    	}
+    	imagesToLoad.removeAll();
+	}
+	
+	/**
+	 * Handles the image list move effect
+	 */
+	private var moveEffectIn:Move = new Move();
+	private var moveEffectOut:Move = new Move();
+
+	/**
+	 * Handles the image list move effect
+	 */	
+    public function doMoveEffect(right:Boolean):void
+    {    	
+    	hiddenImageList.visible = true;
+    	moveEffectIn.target = hiddenImageList;
+    	moveEffectOut.target = imageList;
+    	
+    	moveEffectIn.duration = thumbnailMoveEffectDuration;
+    	moveEffectOut.duration = thumbnailMoveEffectDuration;
+    	
+    	var moveStep:Number = getImageListWidth() + horizontalGap;
+    	if ( ! right )
+    		moveStep = -moveStep;
+    	
+    	moveEffectIn.yFrom = imageList.y;
+        moveEffectIn.yTo = imageList.y;        
+        moveEffectIn.xFrom = imageList.x+moveStep;
+        moveEffectIn.xTo = imageList.x;
+        
+    	moveEffectOut.yFrom = imageList.y;
+        moveEffectOut.yTo = imageList.y;        
+        moveEffectOut.xFrom = imageList.x;
+        moveEffectOut.xTo = imageList.x-moveStep;
+
+		moveEffectIn.addEventListener(EffectEvent.EFFECT_END,moveEffectDone);
+		moveEffectOut.addEventListener(EffectEvent.EFFECT_END,moveEffectDone);
+		
+        if(moveEffectIn.isPlaying)
+        	moveEffectIn.stop();
+        if(moveEffectOut.isPlaying)
+        	moveEffectOut.stop();
+        	
+		moveEffectIn.play();
+		moveEffectOut.play();
+		
+    }
+    
+	/**
+	 * Is animation currently playing?
+	 */
+    private function isAnimationOn():Boolean
+    {
+		return (moveEffectIn.isPlaying || moveEffectOut.isPlaying);
+    }
+    
+	/**
+	 * Invoked when the move effect has finished
+	 */
+    private function moveEffectDone(event:EffectEvent):void
+    {
+        event.target.removeEventListener(EffectEvent.EFFECT_END,moveEffectDone);
+    	
+    	if( !isAnimationOn() )
+    	{
+    		//swap the hidden and shown image lists
+	    	var tmp:HBox = hiddenImageList;
+	    	hiddenImageList = imageList;
+	    	imageList = tmp;
+	    	hiddenImageList.visible = false;
+	    	
+	    	//when animation is off it's safe to 
+	    	//handle image loading
+	    	loadNewThumbnails();
+    	}
+    }
+    
+	/**
+	 * Inviked when a user clicked on the right list button, need to show
+	 * the next group of thumbnails
+	 */
+	private function rightButtonClicked(event:MouseEvent):void
+	{
+		if ( _rightVisibleIndex < images.length-1 && !isAnimationOn() )
+		{
+			_leftVisibleIndex = _rightVisibleIndex+1;
+			_rightVisibleIndex = Math.min(_rightVisibleIndex+maxVisibleItems, images.length-1);
+
+			hiddenImageList.removeAllChildren();
+			for ( var i:Number=_leftVisibleIndex ; i<=_rightVisibleIndex; ++i )
+			{
+				var item:ImageContext = images[i];
+				
+				//we don't want to load a the new thumbnail while
+				//animation is on (it causes funky flickering). 
+				//so delay the operation till animation is done.
+				var delayLoad:Boolean = true;
+				addImageToList(hiddenImageList, item, delayLoad);
+			}
+			doMoveEffect(true);
+			leftButton.buttonMode = true;
+		}
+		
+		if ( _rightVisibleIndex >= images.length-1 )
+		{
+			rightButton.buttonMode = false;
+			rightButton.alpha = triangleButtonAlpha;
+		}
+	}
+	
+	/**
+	 * Inviked when a user clicked on the right list button, need to show
+	 * the prev group of thumbnails
+	 */
+	private function leftButtonClicked(event:MouseEvent):void
+	{
+		if ( _leftVisibleIndex > 0 && !isAnimationOn() )
+		{
+			_rightVisibleIndex = _leftVisibleIndex-1;
+			_leftVisibleIndex = Math.max(_leftVisibleIndex-maxVisibleItems, 0);
+
+			hiddenImageList.removeAllChildren();
+			for ( var i:Number=_leftVisibleIndex ; i<=_rightVisibleIndex; ++i )
+			{
+				var item:ImageContext = images[i];
+				//we don't want to load a the new thumbnail while
+				//animation is on (it causes funky flickering). 
+				//so delay the operation till animation is done.
+				var delayLoad:Boolean = true;
+				addImageToList(hiddenImageList, item, delayLoad);
+			}
+			doMoveEffect(false);
+			rightButton.buttonMode = true;
+		}
+		
+		if ( _leftVisibleIndex == 0 )
+		{
+			leftButton.buttonMode = false;
+			leftButton.alpha = triangleButtonAlpha;
+		}
+	}
+	
+	/**
+	 * Calculate the width needed to display the image list control
+	 */
+	private function getImageListWidth():Number
+	{
+		var numItems:Number = Math.min(maxVisibleItems, images.length);
+		return numItems*(thumbContainerSize+horizontalGap)-horizontalGap;
+	}
+	
+]]>
+</mx:Script>
+
+	<mx:Fade id="slowFade" duration="1000"/>
+	<mx:Fade id="fade" duration="500"/>
+	<mx:Resize id="resize" duration="500" widthFrom="0" heightFrom="0"/>
+	
+	<mx:HBox id="mainPanel" verticalAlign="middle" horizontalAlign="center"
+			horizontalGap="2" borderColor="black" borderThickness="1" 
+			borderStyle="solid" backgroundColor="black" cornerRadius="5">
+	
+		<!-- button shape will be drawn at runtime -->
+		<mx:Canvas id="leftButton" alpha="{triangleButtonAlpha}"
+			width="{triangleButtonContainerWidth}" mouseMove="if(leftButton.buttonMode)leftButton.alpha=1"
+			height="{triangleButtonContainerHeight}" mouseOut="leftButton.alpha=triangleButtonAlpha"
+			click="leftButtonClicked(event)"/>
+	
+		<mx:Canvas id="imageListContainer" horizontalScrollPolicy="off">
+		
+		<mx:HBox id="imageList" height="{thumbSize}" 
+			verticalAlign="middle" horizontalAlign="center"
+			horizontalGap="2" borderColor="black" borderThickness="1"/>
+			
+		<mx:HBox id="hiddenImageList" visible="false" height="{thumbSize}" 
+			verticalAlign="middle" horizontalAlign="center"
+			horizontalGap="{horizontalGap}" borderColor="black" borderThickness="1"/>
+			
+		</mx:Canvas> <!-- imageListContainer -->
+		
+		<!-- button shape will be drawn at runtime -->
+		<mx:Canvas id="rightButton" alpha="{triangleButtonAlpha}"
+			width="{triangleButtonContainerWidth}" mouseMove="if(rightButton.buttonMode) rightButton.alpha=1"
+			height="{triangleButtonContainerHeight}" mouseOut="rightButton.alpha=triangleButtonAlpha"
+			click="rightButtonClicked(event)"/>
+		
+	</mx:HBox> <!-- mainPanel -->
+
+</mx:VBox>

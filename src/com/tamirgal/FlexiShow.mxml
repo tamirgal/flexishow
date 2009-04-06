@@ -1,0 +1,679 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Canvas xmlns:mx="http://www.adobe.com/2006/mxml" xmlns:tamirgal="com.tamirgal.*" width="100%" height="100%"
+	creationComplete="{creationComplete()}" mouseOver="onMouseIn(event)" mouseOut="onMouseOut(event)"
+	resize="onResize()" horizontalScrollPolicy="off" verticalScrollPolicy="off" xmlns:view="com.almirun.common.view.*">
+
+<mx:Script>
+<![CDATA[
+	import mx.controls.Image;
+	import mx.controls.Alert;
+/*
+
+FlexiShaow.mxml
+
+Copyright (c) 2009 Tamir Gal, http://www.tamirgal.com, All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+    1. Redistributions of source code must retain the above copyright notice,
+        this list of conditions and the following disclaimer.
+
+    2. Redistributions in binary form must reproduce the above copyright 
+        notice, this list of conditions and the following disclaimer in 
+        the documentation and/or other materials provided with the distribution.
+
+    3. The names of the authors may not be used to endorse or promote products
+        derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR
+OR ANY CONTRIBUTORS TO THIS SOFTWARE BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,
+OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+	/**
+	 * FlexiShow.mxml
+	 * 
+	 * A component for showing pictures in a slideshow
+	 */
+	import mx.controls.ProgressBar;
+	import mx.rpc.events.ResultEvent;
+	import mx.states.SetEventHandler;
+	import flash.utils.clearTimeout;
+	import mx.core.Application;
+	import flash.utils.setTimeout;
+	import mx.effects.Move;
+	import mx.events.EffectEvent;
+	import flash.utils.setInterval;
+	import mx.rpc.http.HTTPService;
+	
+	private static const STATE_BOTTOM_BAR_SHOWN:Number = 0;
+	private static const STATE_BOTTOM_BAR_HIDDEN:Number = 1;
+	private static const STATE_GALLERIES_PANEL:Number = 2;
+	private static const STATE_BOTTOM_BAR_EFFECT_SHOWING:Number = 3;
+	private static const STATE_BOTTOM_BAR_EFFECT_HIDING:Number = 4;
+
+	[Bindable]
+	public var bottomBarShownOnStart:Boolean = true;
+	[Bindable]
+	public var autostart:Boolean = false;
+		
+	private var mouseIsInside:Boolean = false;
+    private var bottomShownY:Number = 0;
+    private var bottomHiddenY:Number = 0;
+    private var bottomShownYTop:Number = 0;
+    private var upperShownY:Number = 0;
+    private var upperHiddenY:Number = 0;
+	private var bottomBarEffect:Move = new Move();
+	private var upperBarEffect:Move = new Move();
+	private var windowState:Number = STATE_BOTTOM_BAR_SHOWN;
+	private var isUpperBarVisible:Boolean = true;
+	private var isGalleriesPanelVisible:Boolean = false;
+	private var isBottomBarInEffect:Boolean = false;
+	private var timerId:uint = 0;
+	private var loaderContext:LoaderContext = new LoaderContext(true);
+	private var progressBar:ProgressBar;
+	[Bindable]
+	public var progressBarEnabled:Boolean = false;
+	private var progrssCount:uint = 0;
+	private var progrssBytes:uint = 0;
+	private var pollTimer:Timer = new Timer(1000);
+	private var lookaheadImage:Boolean = false;
+	private var lookaheadImageLoaded:Boolean = false;
+	
+	public function creationComplete():void
+	{
+		//draw the buttons
+		fullScreenButton.addChild(Buttons.getButtonFullScreen(fullScreenButton.width, fullScreenButton.height));
+		//galleryScreenButton.addChild(Buttons.getButtonFullScreen(fullScreenButton.width, fullScreenButton.height));
+		
+		//set the control size
+		onResize();
+		
+		//setup an loader context in case images reside on a crossdomain
+		var loaderContext:LoaderContext = new LoaderContext();
+		loaderContext.checkPolicyFile = true;
+		
+		//main image will be loaded in the backround and will be
+		//displayd only when image is fully loaded
+		//install the event handler on both main+stnby as they will be swapped oftenly
+		stndbyImage.addEventListener(Event.COMPLETE, imageLoaded);
+		currentImage.addEventListener(Event.COMPLETE, imageLoaded);
+		stndbyImage.loaderContext = loaderContext;
+		currentImage.loaderContext = loaderContext;
+		
+		//set a rather long first timer
+		//setTimer(7000);
+		
+		   pollTimer.addEventListener(TimerEvent.TIMER,onTimer);
+		   pollTimer.start();
+
+		
+		if (autostart)
+			controlPanel.play();
+	}
+
+	/**
+	 * Fetch the xml file from the given path
+	 */	
+	public function set xmlPath( path:String):void
+	{
+		if (path == null || path == "")
+			path = "./pics.xml";
+		
+		//lbl.text = path;
+		httpService.url = StringUtil.absPath(path);
+		httpService.send();
+	}
+	
+	/**
+	 * onTimer()
+	 * 
+	 * Invoked once every couple of milliseconds. Shows or hides 
+	 * the application upper and bottom bars based on mouse positions
+	 */
+	public function onTimer(event:TimerEvent):void
+	{
+		var timeout:Number = 1000;
+		
+		if (windowState != STATE_GALLERIES_PANEL)// && !isBottomBarInEffect)
+		{
+			//show/hide upper bar
+			if ( !mouseIsInside || (mouseX > width - 30) || (mouseX < 30) )
+			{
+				hideUpperBar();
+			}
+			else
+			{ 
+				showUpperBar();
+			}
+			
+			//show/hide bottom bar
+			if ( !mouseIsInside || ( mouseY < height - bottomBar.height ) )
+			{
+				hideBottomBar();
+				//start a short timer so we'll interactively 
+				//autoshow the bottom bar again when needed
+				//timeout = 200;
+			}
+			else
+			{
+				showBottomBar();
+			}
+		}
+		//setTimer(timeout);
+		//trace(System.totalMemory);
+	}
+	
+	private function setTimer(timeout:Number):void
+	{
+		//cancelTimer();
+		//timerId = setTimeout(onTimer, timeout);
+	}
+	
+	private function cancelTimer():void
+	{
+		if ( timerId != 0 )
+		{
+			//clearTimeout(timerId);
+			//timerId = 0;
+		}
+	}
+	
+	/**
+	 * Invoked when the mouse gets inside the slide show control
+	 */	 
+	public function onMouseIn(event:MouseEvent):void
+	{
+		mouseIsInside = true;
+		if ( mouseY > height - bottomBar.height )
+			showBottomBar();
+	}
+	
+	/**
+	 * Invoked when the mouse gets outside the slide show control
+	 */	
+	public function onMouseOut(event:MouseEvent):void
+	{
+		mouseIsInside = false;
+	}
+	
+	/**
+	 * Hides the bottombar control
+	 */	
+	private function hideBottomBar():void
+	{
+    	if(windowState != STATE_BOTTOM_BAR_SHOWN)
+    		return; //do nothing
+
+		doBottomBarMoveEffect(bottomHiddenY);
+		windowState = STATE_BOTTOM_BAR_HIDDEN;
+	}
+	
+	/**
+	 * Shows the bottombar control
+	 */	
+	private function showBottomBar():void
+	{
+    	if(windowState != STATE_BOTTOM_BAR_HIDDEN)
+    		return; //do nothing
+
+		doBottomBarMoveEffect(bottomShownY);
+		windowState = STATE_BOTTOM_BAR_SHOWN;
+	}
+	
+	/**
+	 * Shows or hide the Galleries panerl 
+	 */
+	private function toggleGalleriesPanel():void
+	{
+		if (windowState == STATE_GALLERIES_PANEL )
+		{
+			var toY:Number = this.height;
+			if(bottomBarShownOnStart)
+				toY -= bottomBar.height; 
+			doBottomBarMoveEffect(toY);
+			showUpperBar();
+			windowState = bottomBarShownOnStart ? STATE_BOTTOM_BAR_SHOWN : STATE_BOTTOM_BAR_HIDDEN;
+			//setTimer(4000);
+			pollTimer.start();
+		}
+		else
+		{					
+			if(isUpperBarVisible)
+				hideUpperBar();
+				
+			pollTimer.stop();
+			doBottomBarMoveEffect(0);
+			windowState = STATE_GALLERIES_PANEL;
+		}
+	}
+	
+	/**
+	 * Hides the bottombar control
+	 */	
+	private function hideUpperBar():void
+	{
+		doUpperBarMoveEffect(false);
+	}
+	
+	/**
+	 * Shows the bottombar control
+	 */	
+	private function showUpperBar():void
+	{
+		doUpperBarMoveEffect(true);
+	}
+	
+	/**
+	 * Performs a move effect on the bottombar control
+	 */	
+    private function doBottomBarMoveEffect(toY:Number):void
+    {		
+		bottomBarEffect.target = bottomBar;
+		var duration:Number = windowState == STATE_BOTTOM_BAR_SHOWN ? 1000 : 500;
+		
+	    bottomBarEffect.duration = duration;
+    	bottomBarEffect.yFrom = bottomBar.y;
+        bottomBarEffect.yTo = toY;        
+        bottomBarEffect.xFrom = bottomBar.x;
+        bottomBarEffect.xTo = bottomBar.x;  
+        
+        bottomBarEffect.addEventListener(EffectEvent.EFFECT_END,bottomBarMoveEffectDone);
+        if(bottomBarEffect.isPlaying)
+        	bottomBarEffect.stop();
+        bottomBarEffect.play();
+        isBottomBarInEffect = true;  
+    }
+    
+	/**
+	 * Performs a move effect on the upperBar control
+	 */	
+    private function doUpperBarMoveEffect(show:Boolean):void
+    {
+    	if(show == isUpperBarVisible)
+    		return; //do nothing
+		
+		upperBarEffect.target = upperBar;
+		
+		var toY:Number = show ? upperShownY : upperHiddenY;
+		var duration:Number = show ? 500 : 1000;
+		
+	    upperBarEffect.duration = duration;
+    	upperBarEffect.yFrom = upperBar.y;
+        upperBarEffect.yTo = toY;        
+        upperBarEffect.xFrom = upperBar.x;
+        upperBarEffect.xTo = upperBar.x;  
+        
+        isUpperBarVisible = !isUpperBarVisible;
+        upperBarEffect.addEventListener(EffectEvent.EFFECT_END,upperBarMoveEffectDone);
+        if(upperBarEffect.isPlaying)
+        	upperBarEffect.stop();
+        upperBarEffect.play();
+        //isupperBarInEffect = true;  
+    }
+    
+    private function bottomBarMoveEffectDone(event:EffectEvent):void
+    {
+    	isBottomBarInEffect = false;
+        event.target.removeEventListener(EffectEvent.EFFECT_END,bottomBarMoveEffectDone);
+        //onResize();
+    }
+    
+    private function upperBarMoveEffectDone(event:EffectEvent):void
+    {
+        event.target.removeEventListener(EffectEvent.EFFECT_END,upperBarMoveEffectDone);
+    }
+    
+    /**
+     * Invoked when the control is resized. Sets the correct boundries on the child controls in each visibility mode
+     */ 
+	private function onResize():void
+	{
+		var bottomVisible:Boolean = windowState == STATE_GALLERIES_PANEL ? bottomBarShownOnStart : (windowState == STATE_BOTTOM_BAR_SHOWN);
+		var upperVisible:Boolean = windowState == STATE_GALLERIES_PANEL ? false : isUpperBarVisible;
+		
+		var by:Number = this.height;
+		var uy:Number = 0;
+		if(bottomVisible)
+			by -= bottomBar.height;
+		if(!upperVisible)
+			uy -= upperBar.height;
+		 
+		bottomShownY =  bottomVisible ? by : by - bottomBar.height;
+		bottomHiddenY = bottomVisible ? by + bottomBar.height : by;
+		upperShownY = upperVisible ? uy : uy + upperBar.height;
+		upperHiddenY = upperVisible ? uy - upperBar.height : uy;
+		
+		//only update bottombar and upperbar location if 
+		//we are in slide show mode (i.e. gallery panel not shown)
+		if(windowState != STATE_GALLERIES_PANEL)
+		{
+			bottomBar.y = by;
+			upperBar.y = uy;
+		}
+	}
+	
+	/*
+	 * Invoked when the standby image is fully loaded
+	 * This function swaps the standby with the displayd image
+	 */
+	private function imageLoaded(event:Event):void 
+	{
+		var img:SmoothImage = event.target as SmoothImage;
+		if (img == stndbyImage)
+		{
+			if (lookaheadImage)
+			{
+				lookaheadImageLoaded = true;
+				//trace("lookahead image ready: "+img.source);
+			}
+			else
+			{
+				doImageTransition();
+			}
+		}
+	}
+	
+	private function doImageTransition():void
+	{
+		var swapImage:SmoothImage = stndbyImage;
+		stndbyImage = currentImage;
+		currentImage = swapImage;
+		if(transitionEffect.isPlaying)
+		{
+			transitionEffect.end();
+		}
+		stndbyImage.visible = false;
+		currentImage.visible = true;
+		imageTitle.text = thumbnailBar.selectedItem.title;
+		imageDescription.text = thumbnailBar.selectedItem.description;
+		//now we can ask the control to trigger the next timer if needed
+		controlPanel.CanTriggerNext = true;
+		hideProgressBar();	
+	}
+	
+	/**
+	 * Invoked when an image had failed to load
+	 */
+	private function imageLoadIOError(event:ErrorEvent):void 
+	{
+		hideProgressBar();
+		Alert.show(event.text, "Load Error");
+	}
+	
+	private function selectedItemChanged(event:SlideShowEvent):void
+	{
+		//don't let the control trigger the next timer image, before image is fully loaded
+		controlPanel.CanTriggerNext = false;
+		//start loading the standby image in the backround, 
+		//will make it visible only after it's fully loaded
+		
+		var lookahead:Boolean = lookaheadImage;
+		var lookaheadLoaded:Boolean = lookaheadImageLoaded;
+		lookaheadImage = false;
+		lookaheadImageLoaded = false;
+		
+		if (lookahead && (stndbyImage.source == event.imageCtx.imageUrl))
+		{
+			if (lookaheadLoaded) {
+				doImageTransition();
+			} else {
+				//trace("lookahead image is *still* loading: "+event.imageCtx.imageUrl);
+			}
+		}
+		else
+		{
+			stndbyImage.load(event.imageCtx.imageUrl);
+		}
+						
+		controlPanel.setFwdButtonClickable(!event.imageCtx.isLast);
+		controlPanel.setRwdButtonClickable(!event.imageCtx.isFirst);
+		
+		progrssCount = 0;
+		progrssBytes = 0;
+		
+		if (firstTime) {
+			firstTime = false;
+			showProgressBar();
+		}
+	}
+	
+	private function progressEvent(event:ProgressEvent):void
+	{
+		var img:Image = Image(event.target);
+		
+		if ( (img == stndbyImage) && (!lookaheadImage) ) 
+		{
+			//try to show the progress bar only when there's slow loading
+			if( event.bytesLoaded > 0 && event.bytesLoaded < event.bytesTotal )
+			{	
+				++progrssCount;		
+				//progrssBytes = event.bytesLoaded;
+				//let 3 rounds of progress go before actually showing the progress bar
+				if (progrssCount > 3) {
+					showProgressBar();
+				}
+			}
+		}
+	}
+	
+	private function toggleFullScreen():void
+	{
+		switch (Application.application.stage.displayState)
+		{
+			case StageDisplayState.NORMAL:
+				goFullScreen();
+				break;
+			case StageDisplayState.FULL_SCREEN:
+				goNormalScreen();
+				break;
+			default:
+				break;
+		}
+	}	
+	
+	private function goFullScreen():void
+	{
+		Application.application.stage.displayState = StageDisplayState.FULL_SCREEN;
+		fullScreenButton.removeAllChildren();
+		fullScreenButton.addChild(Buttons.getButtonFullScreenOff(fullScreenButton.width, fullScreenButton.height));
+		fullScreenButton.alpha=0.65;
+	}
+	
+	private function goNormalScreen():void
+	{
+		Application.application.stage.displayState = StageDisplayState.NORMAL;
+		fullScreenButton.removeAllChildren();
+		fullScreenButton.addChild(Buttons.getButtonFullScreen(fullScreenButton.width, fullScreenButton.height));
+		fullScreenButton.alpha=0.65;
+		//setTimer(4000);
+		pollTimer.start();
+	}
+	
+    // invoked the HTTP response is done
+    private function onHttpResult(event:ResultEvent):void
+    {
+        thumbnailBar.dataProvider = event.result.items.item;
+    }
+    
+    private var firstTime:Boolean = true;
+    
+    private function newProgressBar():ProgressBar
+    {
+		var p:ProgressBar = new ProgressBar();
+		p.width = 300;
+		p.label = "Loading Image %1 out of %2 bytes, %3%%";
+		//p.labelWidth = 400;
+		p.x= currentImage.width/2-p.width/2;
+		p.y=currentImage.height/2-p.height/2;
+		p.visible = false;
+		return p;
+    }
+    
+	private function showProgressBar():void
+	{
+		if (progressBarEnabled)
+		{
+			if (!progressBar) 
+			{
+				progressBar = newProgressBar();
+				firstTime = false;
+				progressBar.source = stndbyImage;
+				progressHolder.addChild(progressBar);
+				//event.imageCtx.viewed = true;
+			}
+			progressBar.visible = true;			
+		}
+		
+		//start the loading spinner
+		spinner.visible = true;
+		spinner.start();
+	}
+	
+	private function hideProgressBar():void
+	{
+		if (progressBarEnabled)
+		{
+			if (progressBar) {
+				progressBar.visible = false;
+				progressBar.source = null;
+				progressBar = null;
+				progressHolder.removeAllChildren();	
+			}
+		}
+		
+		spinner.visible = false;
+		spinner.stop();
+	}
+
+    private function img_httpStatus(evt:HTTPStatusEvent):void {
+        switch (evt.status) {
+            case 200:
+                // Valid image, do nothing.
+                break;
+            case 404:
+                // Invalid image, PANIC!
+                //Alert.show("invalid image!", evt.status.toString());
+                break;
+            default:
+                //Alert.show(evt.toString(), evt.status.toString());
+                break;
+        }
+    }
+    
+    private function transitionEnd(event:EffectEvent):void
+    {
+    	//try to dispose the old image, to save memory
+		var bmp:Bitmap = stndbyImage.content as Bitmap;
+		if (bmp) {
+			stndbyImage.source = null;
+			var bmpData:BitmapData = bmp.bitmapData;
+			if (bmpData) {
+				//trace("disposing");
+				bmpData.dispose();
+			}
+		}
+		
+		//try to pre-fetch the next image
+		var nextIndex:int = thumbnailBar.getNextIndex();
+		if ( -1 != nextIndex ) {
+			var nextItem:ImageContext = thumbnailBar.getItemAt(nextIndex);
+			if (null != nextItem) {
+				lookaheadImage = true;
+				stndbyImage.load(nextItem.imageUrl);
+			}
+		}
+    }
+
+
+]]>
+</mx:Script>
+	
+	<!-- Define the HTTP service -->
+    <mx:HTTPService id="httpService" result="onHttpResult(event);"/>
+	
+	<!-- Fade effect for image transition -->
+	<mx:Fade id="transitionEffect" duration="500" effectEnd="transitionEnd(event)"/>
+	
+	<!-- A display image and a standby image -->	
+	<tamirgal:SmoothImage 
+		id="currentImage" width="100%" height="100%" showEffect="transitionEffect" hideEffect="transitionEffect" 
+		horizontalAlign="center" loaderContext="{new LoaderContext(true)}" httpStatus="img_httpStatus(event);" 
+		ioError="imageLoadIOError(event)" progress="progressEvent(event)"/>
+		
+	<tamirgal:SmoothImage 
+		id="stndbyImage" visible="false" width="100%" height="100%" showEffect="transitionEffect" hideEffect="transitionEffect" 
+		horizontalAlign="center" loaderContext="{new LoaderContext(true)}" httpStatus="img_httpStatus(event);" 
+		ioError="imageLoadIOError(event)"  progress="progressEvent(event)"/>
+
+    <!-- Activity indicators -->
+    <!-- a spinner -->            
+	<view:ActivitySpinner id="spinner" colour="0xffffff" verticalCenter="-20"
+		horizontalCenter="0" visible="false"/>
+	<!-- a place holder for the progress bar -->	
+	<mx:Canvas id="progressHolder" />
+	
+	<!-- The bottom bar section -->
+	
+	<mx:Canvas id="bottomBar" visible="true" verticalScrollPolicy="off" horizontalScrollPolicy="off"
+		width="100%" height="{thumbnailBar.height+10}"
+		borderColor="white" borderThickness="1" backgroundColor="white" 
+		backgroundAlpha="0.65"
+	>
+	
+		<!-- The control panel for 'next', 'prev', 'play' buttons -->	
+		<tamirgal:ControlPanel id="controlPanel" x="{thumbnailBar.x - controlPanel.width - 20}" y="{bottomBar.height/2-controlPanel.height/2}" 
+			buttonFwdClicked="thumbnailBar.selectNext()" buttonRwdClicked="thumbnailBar.selectPrev()" onImageTimout="thumbnailBar.selectNext(true);"/>
+		
+		<!-- This holds the list of thumbnails -->		
+		<tamirgal:ThumbnailBar id="thumbnailBar" maxVisibleItems="7"  
+			y="{bottomBar.height/2-thumbnailBar.height/2}"
+			x="{bottomBar.width/2-thumbnailBar.width/2}"
+			previewContainer="{this}" selectedItemChanged="{selectedItemChanged(event)}"
+		/>
+		
+		<!-- Button for toggeling fullscreen -->
+		<mx:Canvas id="fullScreenButton" toolTip="Full Screen" visible="true" width="25" height="20" buttonMode="true" click="{toggleFullScreen()}"
+			x="{thumbnailBar.x+thumbnailBar.width+30}" y="{bottomBar.height/2-fullScreenButton.height/2}" alpha="0.65" mouseOver="{fullScreenButton.alpha=1}" mouseOut="{fullScreenButton.alpha=0.65}"/>
+
+
+		<!-- Button for showing the galleries chooser panerl -->
+		<mx:Button id="galleryScreenButton" label="About" toolTip="About" visible="true" height="20" buttonMode="true" click="{toggleGalleriesPanel()}"
+			x="{fullScreenButton.x+fullScreenButton.width+10}" y="{bottomBar.height/2-galleryScreenButton.height/2}"/>
+		
+
+	</mx:Canvas> 
+	<!-- bottomBar end -->
+	
+	<!-- The upper bar, hold the name and description of the image -->
+	<mx:Canvas id="upperBar" backgroundColor="#87CEFA" backgroundAlpha="0.3" width="100%" height="70" verticalScrollPolicy="off" horizontalScrollPolicy="off" 
+		borderColor="#282828" borderThickness="1" borderStyle="solid" cornerRadius="7">
+		
+		<mx:Label id="imageTitle" text="" x="10" y="{upperBar.height/6}" color="#ffffff" fontWeight="bold" fontSize="14"/>
+		<mx:Label id="imageDescription" text="" x="10" y="{upperBar.height*3/6}" color="#ffffff" fontWeight="bold"/>
+		
+	</mx:Canvas> 
+	<!-- upperBar end-->
+	
+	<!-- galleyList-->
+	<mx:Canvas id="galleyList" backgroundColor="#87CEFA" backgroundAlpha="0.3" width="100%" height="{this.height-bottomBar.height}" verticalScrollPolicy="off" horizontalScrollPolicy="off" 
+		borderColor="#282828" borderThickness="1" borderStyle="solid" cornerRadius="7"
+		y="{bottomBar.y+bottomBar.height}"
+		>
+		
+		<mx:Label id="imageTitle1" text="FlexiShow v1.0" verticalCenter="0" horizontalCenter="0" color="#ffffff" fontWeight="bold" fontSize="40" fontFamily="ArialEmbedded"/>
+		<mx:LinkButton id="imageDescription1" label="www.tamirgal.com" click="{navigateToURL(new URLRequest('http://www.tamirgal.com'))}" verticalCenter="50" horizontalCenter="0" color="#ffffff" fontSize="16"/>
+		
+	</mx:Canvas> 
+	<!-- galleyList -->
+	
+	<!-- <mx:Label id="lbl" text="sdsd"/> -->
+</mx:Canvas>
